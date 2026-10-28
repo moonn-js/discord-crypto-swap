@@ -1,5 +1,5 @@
 {
-  "name": "discord-swap-single-bot",
+  "name": "discord-swap-bot",
   "version": "1.0.0",
   "private": true,
   "description": "A private ticket-based Discord bot for non-custodial NEAR Intents 1Click swaps.",

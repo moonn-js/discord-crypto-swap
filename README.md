@@ -1,8 +1,4 @@
-# Single-bot Discord swap bot
-
-This independent single-bot edition retains the swap providers, tickets, fee displays, notifications, and multi-server support from `moonn-js/swap` at commit `3b750db`. It runs one Discord bot identity and keeps its own statistics. Multiple Discord servers may use that same bot.
-
-For a separate deployment, create a new Discord application/token and a dedicated PostgreSQL database. Configure one service from this repository, with one running instance, using the supplied Dockerfile. Fill in `.env.example` with your own settings; credentials, existing swap records, and production deployment connections are not included.
+# Discord swap bot
 
 A non-custodial Discord bot that opens a private ticket for each swap and uses a signed quote provider for settlement tracking. Members interact through a public **Start swap** button, private ticket dropdowns, buttons, and ordinary ticket messages. There are no user-facing slash commands or modals.
 

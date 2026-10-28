@@ -169,7 +169,7 @@ describe('completion vouch claims', () => {
   });
 });
 
-describe('single-bot user swap stats', () => {
+describe('user swap stats', () => {
   it('reads server totals only from this bot and guild', async () => {
     const pool = {
       query: vi.fn()
