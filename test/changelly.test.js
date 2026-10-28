@@ -1,0 +1,35 @@
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { generateKeyPairSync, verify, createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { ApiError } from '@defuse-protocol/one-click-sdk-typescript';
+import { ChangellyClient, ChangellyError, matchChangellyAsset, netPayout } from '../src/services/changelly-client.js';
+import { SwapClient } from '../src/services/swap-client.js';
+import { OneClickClient, QuoteSecurityError } from '../src/services/oneclick-client.js';
+const {privateKey, publicKey} = generateKeyPairSync('rsa', {modulusLength: 2048});
+const config = {changellyEnabled:true, changellyPrivateKeyHex:privateKey.export({type:'pkcs8',format:'der'}).toString('hex'), changellyZeroCommissionConfirmed:true,fundingDeadlineMs:3600000,changeNowApiKey:'test-key'};
+const origin={symbol:'LTC',blockchain:'ltc',decimals:8,assetId:'ltc',price:55};
+const destination={symbol:'USDT',blockchain:'bsc',decimals:18,assetId:'usdt-bsc',contractAddress:'0x123',price:1};
+const currencies=[{ticker:'ltc',blockchain:'litecoin',blockchainPrecision:8,enabled:true,enabledFrom:true,enabledTo:true},{ticker:'usdtbsc',blockchain:'binance_smart_chain',contractAddress:'0x123',blockchainPrecision:18,enabled:true,enabledFrom:true,enabledTo:true}];
+const params={dry:true,originAsset:origin,destinationAsset:destination,amountBase:'100000000',recipient:'recipient',refundTo:'refund'};
+const order={id:'order-123',type:'float',currencyFrom:'ltc',currencyTo:'usdtbsc',payinAddress:'deposit',payoutAddress:'recipient',refundAddress:'refund',amountExpectedFrom:'1',amountExpectedTo:'54',networkFee:'0.1',status:'new'};
+function fixture(overrides={}, conf={}){
+const fetchImpl=vi.fn(async (_url,options)=>{const r=JSON.parse(options.body);const defaults={getCurrenciesFull:currencies,validateAddress:{result:true},getExchangeAmount:[{from:'ltc',to:'usdtbsc',amountFrom:'1',amountTo:'54',networkFee:'0.1'}],createTransaction:order,getTransactions:[{...order,status:'finished',amountFrom:'1.1',amountTo:'53.8',payoutHash:'0x'+'a'.repeat(64)}]};
+const result=overrides[r.method]??defaults[r.method]; if(result instanceof Error)throw result;
+return {ok:true,status:200,json:async()=>({jsonrpc:'2.0',id:r.id,result})};});
+return {fetchImpl,client:new ChangellyClient({...config,...conf},{fetchImpl})};}
+afterEach(()=>vi.restoreAllMocks());
+describe('Changelly integration',()=>{
+it('signs the exact RPC body and derives the registered API key',async()=>{const {client,fetchImpl}=fixture();await client.getCurrencies();const options=fetchImpl.mock.calls[0][1];expect(verify('sha256',Buffer.from(options.body),publicKey,Buffer.from(options.headers['X-Api-Signature'],'base64'))).toBe(true);expect(options.headers['X-Api-Key']).toBe(createHash('sha256').update(publicKey.export({type:'pkcs1',format:'der'})).digest('base64'));});
+it('subtracts withdrawal fees exactly and creates no preview order',async()=>{const {client,fetchImpl}=fixture();const q=await client.getQuote(params);expect(q.quote.amountOutFormatted).toBe('53.9');expect(q.provider).toBe('changelly');expect(q.quote.minAmountOut).toBeNull();expect(fetchImpl.mock.calls.some(([,o])=>JSON.parse(o.body).method==='createTransaction')).toBe(false);});
+it.each([{...destination,blockchain:'eth'},{...destination,contractAddress:'0x999'},{...destination,decimals:6}])('rejects asset identity mismatch',asset=>expect(matchChangellyAsset(asset,currencies,'buy')).toBeNull());
+it('rejects duplicate matches',()=>expect(matchChangellyAsset(origin,[currencies[0],currencies[0]],'sell')).toBeNull());
+it('requires zero commission confirmation before creating orders',async()=>{const {client,fetchImpl}=fixture({}, {changellyZeroCommissionConfirmed:false});await expect(client.getQuote({...params,dry:false})).rejects.toMatchObject({code:'CHANGELLY_COMMISSION_UNCONFIRMED'});expect(fetchImpl.mock.calls.some(([,o])=>JSON.parse(o.body).method==='createTransaction')).toBe(false);});
+it('does not retry an uncertain order creation',async()=>{const {client,fetchImpl}=fixture({createTransaction:new Error('timeout')});await expect(client.getQuote({...params,dry:false})).rejects.toThrow();expect(fetchImpl.mock.calls.filter(([,o])=>JSON.parse(o.body).method==='createTransaction')).toHaveLength(1);});
+it.each([{...order,payoutAddress:'attacker'},{...order,currencyTo:'usdt'},{...order,payinAddress:''},{...order,payoutExtraId:'unexpected'}])('rejects inconsistent order data',async bad=>{const {client}=fixture({createTransaction:bad});await expect(client.getQuote({...params,dry:false})).rejects.toThrow();});
+it('resumes persisted orders and does not deduct the network fee twice on settlement',async()=>{const {client}=fixture();const executable=JSON.parse(JSON.stringify(await client.getQuote({...params,dry:false})));const restarted=fixture().client;const status=await restarted.getExecutionStatus({executable_quote:executable,deposit_address:'deposit',recipient:'recipient',refund_to:'refund'});expect(status).toMatchObject({status:'SUCCESS',swapDetails:{amountOutFormatted:'53.8',amountInFormatted:'1.1'}});});
+it.each(['hold','failed','overdue','expired'])('continues tracking %s for support',async status=>{const {client}=fixture({getTransactions:[{...order,status,amountFrom:'',amountTo:'0'}]});const executable=await client.getQuote({...params,dry:false});expect(await client.getExecutionStatus({executable_quote:executable,deposit_address:'deposit',recipient:'recipient',refund_to:'refund'})).toMatchObject({status:'PROCESSING',requiresAttention:true});});
+it('rejects invalid network fee values',()=>{expect(()=>netPayout('1','2',8)).toThrow();expect(()=>netPayout('1',undefined,8)).toThrow();});
+it('uses Changelly first only when 1Click has no route',async()=>{vi.spyOn(OneClickClient.prototype,'getVerifiedQuote').mockRejectedValue(new ApiError({method:'POST',url:'/v0/quote'},{url:'/v0/quote',ok:false,status:400,statusText:'Error',body:{message:'no route with sufficient liquidity'}},'API failure'));const client=new SwapClient(config);vi.spyOn(client.changelly,'getQuote').mockResolvedValue({provider:'changelly'});const cn=vi.spyOn(client.changeNow,'getQuote');expect(await client.getVerifiedQuote(params)).toEqual({provider:'changelly'});expect(cn).not.toHaveBeenCalled();});
+it('never switches a pinned Changelly order on errors',async()=>{const client=new SwapClient(config);vi.spyOn(client.changelly,'getQuote').mockRejectedValue(new ChangellyError('NO_LIQUIDITY_ROUTE','no route'));const cn=vi.spyOn(client.changeNow,'getQuote');await expect(client.getVerifiedQuote({...params,dry:false,provider:'changelly'})).rejects.toThrow();expect(cn).not.toHaveBeenCalled();});
+it('never bypasses primary signature failures',async()=>{vi.spyOn(OneClickClient.prototype,'getVerifiedQuote').mockRejectedValue(new QuoteSecurityError('invalid signature'));const client=new SwapClient(config);const fallback=vi.spyOn(client.changelly,'getQuote');await expect(client.getVerifiedQuote(params)).rejects.toThrow();expect(fallback).not.toHaveBeenCalled();});
+});

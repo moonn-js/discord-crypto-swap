@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: swapbot
+      POSTGRES_USER: swapbot
+      POSTGRES_PASSWORD: swapbot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U swapbot -d swapbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - swapbot-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://swapbot:swapbot@postgres:5432/swapbot
+      DATABASE_SSL: "false"
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  swapbot-postgres:
