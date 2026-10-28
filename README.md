@@ -1,5 +1,9 @@
 # Single-bot Discord swap bot
 
+This independent single-bot edition retains the swap providers, tickets, fee displays, notifications, and multi-server support from `moonn-js/swap` at commit `3b750db`. It runs one Discord bot identity and keeps its own statistics. Multiple Discord servers may use that same bot.
+
+For a separate deployment, create a new Discord application/token and a dedicated PostgreSQL database. Configure one service from this repository, with one running instance, using the supplied Dockerfile. Fill in `.env.example` with your own settings; credentials, existing swap records, and production deployment connections are not included.
+
 A non-custodial Discord bot that opens a private ticket for each swap and uses a signed quote provider for settlement tracking. Members interact through a public **Start swap** button, private ticket dropdowns, buttons, and ordinary ticket messages. There are no user-facing slash commands or modals.
 
 When `RELAY_API_KEY` is configured, previews race NEAR Intents against Relay deposit-address quotes and choose the highest net destination-token amount (all provider costs included). Ties prefer NEAR. Confirmation creates instructions only with the selected provider; it never silently changes providers. Unsupported Relay assets and operational failures leave NEAR available. Existing fallback providers keep their current policy.
@@ -201,7 +205,3 @@ ChangeNOW orders use automatic deposit detection and persist their provider orde
 - Full signed quote payloads are retained for dispute/debug evidence and removed according to the configured retention window.
 - Use TLS for a remote PostgreSQL service (`DATABASE_SSL=true`), provider encryption at rest, restricted database credentials, and encrypted backups.
 - Monitor `/readyz`; a 1Click `401` marks the process unready until an authenticated request succeeds.
-
-This independent single-bot edition retains the swap providers, tickets, fee displays, notifications, and multi-server support from `moonn-js/swap` at commit `3b750db`. It runs one Discord bot identity and keeps its own statistics. Multiple Discord servers may use that same bot.
-
-For a separate deployment, create a new Discord application/token and a dedicated PostgreSQL database. Configure one service from this repository, with one running instance, using the supplied Dockerfile. Fill in `.env.example` with your own settings; credentials, existing swap records, and production deployment connections are not included.
